@@ -6176,6 +6176,19 @@ void ProcessGroupNCCL::initializeDeviceStateForComm(
   }
 }
 
+at::cuda::CUDAStream ProcessGroupNCCL::getNCCLStream(at::Device device) {
+  const auto key = getKeyFromDevice(device);
+  std::lock_guard<std::mutex> lock(mutex_);
+  auto it = ncclStreams_.find(key);
+  TORCH_CHECK(
+      it != ncclStreams_.end(),
+      "ProcessGroupNCCL::getNCCLStream: no NCCL stream for device ",
+      device,
+      " on this group; the NCCL communicator has not been initialized "
+      "yet (issue any NCCL collective once on this PG to initialize it).");
+  return it->second;
+}
+
 } // namespace c10d
 
 #endif // USE_C10D_NCCL

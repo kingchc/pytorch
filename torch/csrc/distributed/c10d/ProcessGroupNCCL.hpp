@@ -802,6 +802,15 @@ class TORCH_API ProcessGroupNCCL : public Backend {
     return std::string(NCCL_BACKEND_NAME);
   }
 
+  // Returns the dedicated CUDA stream this PG uses for NCCL kernel
+  // launches on `device`.  Lets ops coordinate with the PG's collective
+  // stream without going through a Work object — useful for one-sided
+  // NCCL APIs (e.g. `ncclReshardUserWindow`) that take a stream argument
+  // and key internal caches on it.  The stream is created lazily when a
+  // NCCL communicator is initialized for `device`; throws if no such
+  // initialization has happened on this PG.
+  at::cuda::CUDAStream getNCCLStream(at::Device device);
+
   bool supportsSplitting() const override {
     return true;
   }
