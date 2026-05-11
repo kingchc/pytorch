@@ -30,4 +30,31 @@ TORCH_API void nccl_reduce_scatter_offset(
     std::optional<at::IntArrayRef> offsets,
     std::optional<at::IntArrayRef> dst_ranks,
     const std::string& red_op);
+
+// In-place M-to-N cast (resharding) of a 1-D, 2-D, or 3-D tensor between
+// two rank meshes, backed by `ncclReshardUserWindow` (originated in
+// nccl-rl; pending upstream NCCL merge).  `buf` must be allocated through NCCL
+// symmetric memory and sized to hold the larger of the source and
+// destination local shapes.  Each mesh is described by
+// `(dims[2], start_rank, placement[2])` where placement[i] is -1 for
+// REPLICATE or a non-negative tensor dim index for SHARD.  A rank that
+// does not own a tile on a given side passes a zero-shape on that side;
+// the binding maps that to `ncclDistTensor_t::data_ptr = NULL`.
+TORCH_API void nccl_mxn_cast(
+    at::Tensor& buf,
+    at::IntArrayRef src_local_shape,
+    at::IntArrayRef src_mesh_dims,
+    int64_t src_mesh_start_rank,
+    at::IntArrayRef src_placement,
+    at::IntArrayRef dst_local_shape,
+    at::IntArrayRef dst_mesh_dims,
+    int64_t dst_mesh_start_rank,
+    at::IntArrayRef dst_placement,
+    const std::string& group_name);
+
+// Best-effort `ncclReshardFinalize` — releases the reshard library's
+// internal caches + transpose buffer.  Idempotent and safe to call
+// multiple times; used by an atexit hook in the Python wrapper so the
+// release happens while CUDA + NCCL contexts are still live.
+TORCH_API void nccl_mxn_cast_finalize();
 } // namespace c10d::nccl_extension

@@ -580,8 +580,32 @@ if(USE_CUDA)
         ${TORCH_SRC_DIR}/csrc/distributed/c10d/symm_mem/NCCLSymmetricMemory.cu
         ${TORCH_SRC_DIR}/csrc/distributed/c10d/symm_mem/nccl_extension.cu
         ${TORCH_SRC_DIR}/csrc/distributed/c10d/symm_mem/ops/nccl_reduce_scatter_offset.cu
+        ${TORCH_SRC_DIR}/csrc/distributed/c10d/symm_mem/ops/nccl_mxn_cast.cu
         ${TORCH_SRC_DIR}/csrc/distributed/c10d/symm_mem/cuda_mem_pool.cpp
         PROPERTIES COMPILE_FLAGS "-DPYTORCH_C10_DRIVER_API_SUPPORTED=1"
+      )
+      # nccl-rl (user-window-api-only) sources, pinned via the
+      # third_party/nccl-rl submodule.  Provisional: revert this block once
+      # ncclReshardUserWindow lands upstream in NCCL.
+      set(NCCL_RL_SRC_DIR "${PROJECT_SOURCE_DIR}/third_party/nccl-rl/src")
+      set_source_files_properties(
+        ${TORCH_SRC_DIR}/csrc/distributed/c10d/symm_mem/ops/nccl_mxn_cast.cu
+        PROPERTIES
+          COMPILE_FLAGS "-DPYTORCH_C10_DRIVER_API_SUPPORTED=1 -DNCCL_HAS_RESHARD_API"
+          INCLUDE_DIRECTORIES "${NCCL_RL_SRC_DIR}"
+      )
+      set_source_files_properties(
+        ${NCCL_RL_SRC_DIR}/reshard_user_window.cu
+        ${NCCL_RL_SRC_DIR}/reshard_cache.cc
+        ${NCCL_RL_SRC_DIR}/reshard_config.cc
+        ${NCCL_RL_SRC_DIR}/reshard_init.cc
+        ${NCCL_RL_SRC_DIR}/reshard_loadbalance.cc
+        ${NCCL_RL_SRC_DIR}/reshard_mesh.cc
+        ${NCCL_RL_SRC_DIR}/reshard_prepare.cc
+        ${NCCL_RL_SRC_DIR}/reshard_transpose.cc
+        PROPERTIES
+          COMPILE_FLAGS "-DPYTORCH_C10_DRIVER_API_SUPPORTED=1"
+          INCLUDE_DIRECTORIES "${NCCL_RL_SRC_DIR}"
       )
     endif()
 
