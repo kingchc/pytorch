@@ -584,28 +584,34 @@ if(USE_CUDA)
         ${TORCH_SRC_DIR}/csrc/distributed/c10d/symm_mem/cuda_mem_pool.cpp
         PROPERTIES COMPILE_FLAGS "-DPYTORCH_C10_DRIVER_API_SUPPORTED=1"
       )
-      # nccl-rl (user-window-api-only) sources, pinned via the
-      # third_party/nccl-rl submodule.  Provisional: revert this block once
-      # ncclReshardUserWindow lands upstream in NCCL.
-      set(NCCL_RL_SRC_DIR "${PROJECT_SOURCE_DIR}/third_party/nccl-rl/src")
+      # The mxn_cast binding uses the nccl-reshard public C API.  Do not
+      # compile nccl-rl sources into PyTorch: the binding dlopens
+      # libnccl_reshard.so at runtime so benchmark jobs can swap nccl-rl
+      # builds without rebuilding PyTorch.
+      set(NCCL_RESHARD_HOME "$ENV{NCCL_RESHARD_HOME}" CACHE PATH "nccl-reshard install prefix")
+      set(NCCL_RESHARD_INCLUDE_DIR "$ENV{NCCL_RESHARD_INCLUDE_DIR}" CACHE PATH "Directory containing nccl_reshard.h")
+      find_path(NCCL_RESHARD_INCLUDE_DIR
+        NAMES nccl_reshard.h
+        HINTS
+          "${NCCL_RESHARD_INCLUDE_DIR}"
+          "${NCCL_RESHARD_HOME}/include/nccl_reshard"
+          "${NCCL_RESHARD_HOME}/include"
+          "$ENV{NCCL_RESHARD_INCLUDE_DIR}"
+          "$ENV{NCCL_RESHARD_HOME}/include/nccl_reshard"
+          "$ENV{NCCL_RESHARD_HOME}/include"
+      )
+      if(NOT NCCL_RESHARD_INCLUDE_DIR)
+        message(FATAL_ERROR
+          "NCCL_RESHARD_INCLUDE_DIR is required for symm_mem.mxn_cast; "
+          "set it to the directory containing nccl_reshard.h, or set "
+          "NCCL_RESHARD_HOME to an nccl-reshard install prefix")
+      endif()
+      message(STATUS "NCCL_RESHARD_INCLUDE_DIR: ${NCCL_RESHARD_INCLUDE_DIR}")
       set_source_files_properties(
         ${TORCH_SRC_DIR}/csrc/distributed/c10d/symm_mem/ops/nccl_mxn_cast.cu
         PROPERTIES
           COMPILE_FLAGS "-DPYTORCH_C10_DRIVER_API_SUPPORTED=1 -DNCCL_HAS_RESHARD_API"
-          INCLUDE_DIRECTORIES "${NCCL_RL_SRC_DIR}"
-      )
-      set_source_files_properties(
-        ${NCCL_RL_SRC_DIR}/reshard_user_window.cu
-        ${NCCL_RL_SRC_DIR}/reshard_cache.cc
-        ${NCCL_RL_SRC_DIR}/reshard_config.cc
-        ${NCCL_RL_SRC_DIR}/reshard_init.cc
-        ${NCCL_RL_SRC_DIR}/reshard_loadbalance.cc
-        ${NCCL_RL_SRC_DIR}/reshard_mesh.cc
-        ${NCCL_RL_SRC_DIR}/reshard_prepare.cc
-        ${NCCL_RL_SRC_DIR}/reshard_transpose.cc
-        PROPERTIES
-          COMPILE_FLAGS "-DPYTORCH_C10_DRIVER_API_SUPPORTED=1"
-          INCLUDE_DIRECTORIES "${NCCL_RL_SRC_DIR}"
+          INCLUDE_DIRECTORIES "${NCCL_RESHARD_INCLUDE_DIR}"
       )
     endif()
 
@@ -1017,6 +1023,9 @@ elseif(USE_CUDA)
   if(USE_NCCL)
     target_link_libraries(torch_cuda PRIVATE __caffe2_nccl)
     target_compile_definitions(torch_cuda PRIVATE USE_NCCL)
+    if(NCCL_RESHARD_INCLUDE_DIR)
+      target_link_libraries(torch_cuda PRIVATE ${CMAKE_DL_LIBS})
+    endif()
   endif()
 
   # Compile with NVSHMEM

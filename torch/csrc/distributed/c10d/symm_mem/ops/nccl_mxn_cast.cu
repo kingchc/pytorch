@@ -12,8 +12,8 @@
 // the nccl-rl repository's `user-window-api-only` branch; expected to land
 // upstream in NCCL).  Gated behind `NCCL_HAS_RESHARD_API` so the binding
 // can be staged ahead of the upstream merge: define the macro at build
-// time once the NCCL distribution exposes `nccl_reshard.h` and the
-// `ncclReshardUserWindow` symbol.
+// time once `nccl_reshard.h` is available.  The implementation symbols
+// are resolved dynamically from `libnccl_reshard.so`.
 #if defined(NCCL_HAS_RESHARD_API)
 #if !defined(NCCL_HAS_SYMMEM_DEVICE_SUPPORT)
 #error "NCCL_HAS_RESHARD_API requires NCCL_HAS_SYMMEM_DEVICE_SUPPORT (NCCL >= 2.28)"
@@ -21,6 +21,7 @@
 #include "nccl_reshard.h"
 #endif
 
+#include <dlfcn.h>
 #include <mutex>
 
 namespace c10d::nccl_extension {
@@ -30,6 +31,56 @@ using namespace c10d::symmetric_memory;
 #if defined(NCCL_HAS_RESHARD_API)
 
 namespace {
+
+struct ReshardApi {
+  using InitFn = ncclResult_t (*)(ncclReshardConfig_t*);
+  using FinalizeFn = ncclResult_t (*)();
+  using UserWindowFn = ncclResult_t (*)(
+      ncclComm_t,
+      ncclWindow_t,
+      const ncclDistTensor_t*,
+      const ncclDistTensor_t*,
+      cudaStream_t);
+
+  void* handle = nullptr;
+  InitFn init = nullptr;
+  FinalizeFn finalize = nullptr;
+  UserWindowFn user_window = nullptr;
+};
+
+ReshardApi& get_reshard_api() {
+  static ReshardApi api;
+  static std::once_flag load_flag;
+  std::call_once(load_flag, []() {
+    api.handle = dlopen("libnccl_reshard.so", RTLD_NOW | RTLD_LOCAL);
+    TORCH_CHECK(
+        api.handle != nullptr,
+        "nccl_mxn_cast: failed to load libnccl_reshard.so: ",
+        dlerror(),
+        ". Add the nccl-reshard lib directory to LD_LIBRARY_PATH.");
+
+    auto load_symbol = [](const char* name) -> void* {
+      dlerror();
+      void* symbol = dlsym(api.handle, name);
+      const char* error = dlerror();
+      TORCH_CHECK(
+          error == nullptr && symbol != nullptr,
+          "nccl_mxn_cast: failed to resolve ",
+          name,
+          " from libnccl_reshard.so: ",
+          error ? error : "symbol is null");
+      return symbol;
+    };
+
+    api.init = reinterpret_cast<ReshardApi::InitFn>(
+        load_symbol("ncclReshardInit"));
+    api.finalize = reinterpret_cast<ReshardApi::FinalizeFn>(
+        load_symbol("ncclReshardFinalize"));
+    api.user_window = reinterpret_cast<ReshardApi::UserWindowFn>(
+        load_symbol("ncclReshardUserWindow"));
+  });
+  return api;
+}
 
 ncclDataType_t to_nccl_dtype(at::ScalarType st) {
   switch (st) {
@@ -197,8 +248,9 @@ void nccl_mxn_cast(
   // caller needs to override maxCta.
   static std::once_flag init_flag;
   std::call_once(init_flag, []() {
+    auto& api = get_reshard_api();
     C10D_NCCL_CHECK(
-        ncclReshardInit(/*config=*/nullptr),
+        api.init(/*config=*/nullptr),
         "ncclReshardInit failed in nccl_mxn_cast");
   });
 
@@ -231,8 +283,9 @@ void nccl_mxn_cast(
         is_dst_role ? static_cast<size_t>(dst_local_shape[d]) : 0;
   }
 
+  auto& api = get_reshard_api();
   C10D_NCCL_CHECK(
-      ::ncclReshardUserWindow(comm, window, &src, &dst, stream),
+      api.user_window(comm, window, &src, &dst, stream),
       "ncclReshardUserWindow failed in nccl_mxn_cast");
 
   if (use_side_stream) {
@@ -252,10 +305,15 @@ void nccl_mxn_cast_finalize() {
   // logged, never thrown.
   static std::once_flag fin_flag;
   std::call_once(fin_flag, []() {
-    auto rc = ::ncclReshardFinalize();
-    if (rc != ncclSuccess) {
-      LOG(WARNING) << "ncclReshardFinalize returned " << rc
-                   << " — symm_mem.mxn_cast resources may not be fully released.";
+    try {
+      auto& api = get_reshard_api();
+      auto rc = api.finalize();
+      if (rc != ncclSuccess) {
+        LOG(WARNING) << "ncclReshardFinalize returned " << rc
+                     << " — symm_mem.mxn_cast resources may not be fully released.";
+      }
+    } catch (const c10::Error& e) {
+      LOG(WARNING) << "ncclReshardFinalize skipped: " << e.what();
     }
   });
 }
