@@ -588,8 +588,14 @@ if(USE_CUDA)
       # compile nccl-rl sources into PyTorch: the binding dlopens
       # libnccl_reshard.so at runtime so benchmark jobs can swap nccl-rl
       # builds without rebuilding PyTorch.
-      set(NCCL_RESHARD_HOME "$ENV{NCCL_RESHARD_HOME}" CACHE PATH "nccl-reshard install prefix")
-      set(NCCL_RESHARD_INCLUDE_DIR "$ENV{NCCL_RESHARD_INCLUDE_DIR}" CACHE PATH "Directory containing nccl_reshard.h")
+      set(NCCL_RESHARD_HOME "" CACHE PATH "nccl-reshard install prefix")
+      set(NCCL_RESHARD_INCLUDE_DIR "" CACHE PATH "Directory containing nccl_reshard.h")
+      if(NOT NCCL_RESHARD_HOME AND DEFINED ENV{NCCL_RESHARD_HOME} AND NOT "$ENV{NCCL_RESHARD_HOME}" STREQUAL "")
+        set(NCCL_RESHARD_HOME "$ENV{NCCL_RESHARD_HOME}" CACHE PATH "nccl-reshard install prefix" FORCE)
+      endif()
+      if(NOT NCCL_RESHARD_INCLUDE_DIR AND DEFINED ENV{NCCL_RESHARD_INCLUDE_DIR} AND NOT "$ENV{NCCL_RESHARD_INCLUDE_DIR}" STREQUAL "")
+        set(NCCL_RESHARD_INCLUDE_DIR "$ENV{NCCL_RESHARD_INCLUDE_DIR}" CACHE PATH "Directory containing nccl_reshard.h" FORCE)
+      endif()
       find_path(NCCL_RESHARD_INCLUDE_DIR
         NAMES nccl_reshard.h
         HINTS
