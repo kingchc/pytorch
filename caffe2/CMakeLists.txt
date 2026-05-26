@@ -581,9 +581,100 @@ if(USE_CUDA)
         ${TORCH_SRC_DIR}/csrc/distributed/c10d/symm_mem/NCCLSymmetricMemory.cu
         ${TORCH_SRC_DIR}/csrc/distributed/c10d/symm_mem/nccl_extension.cu
         ${TORCH_SRC_DIR}/csrc/distributed/c10d/symm_mem/ops/nccl_reduce_scatter_offset.cu
+        ${TORCH_SRC_DIR}/csrc/distributed/c10d/symm_mem/ops/nccl_mxn_cast.cu
         ${TORCH_SRC_DIR}/csrc/distributed/c10d/symm_mem/cuda_mem_pool.cpp
         PROPERTIES COMPILE_FLAGS "-DPYTORCH_C10_DRIVER_API_SUPPORTED=1"
       )
+      # NCCL Xfer user-window reshard support is consumed as an installed
+      # shared library instead of vendoring sources in the PyTorch tree.
+      # Set NCCL_XFER_HOME to the NCCL Xfer install prefix, or pass
+      # NCCL_XFER_INCLUDE_DIR / NCCL_XFER_LIBRARY directly.
+      set(NCCL_XFER_HOME "" CACHE PATH "Path to NCCL Xfer install prefix")
+      set(NCCL_XFER_LIB_DIR "" CACHE PATH "Path to NCCL Xfer library directory")
+      set(
+        NCCL_XFER_USE_NCCL_SO
+        OFF
+        CACHE BOOL
+        "Use the already-linked libnccl.so for NCCL Xfer reshard symbols"
+      )
+      if(NOT NCCL_XFER_HOME AND DEFINED ENV{NCCL_XFER_HOME})
+        set(NCCL_XFER_HOME "$ENV{NCCL_XFER_HOME}")
+      endif()
+      if(NOT NCCL_XFER_LIB_DIR AND DEFINED ENV{NCCL_XFER_LIB_DIR})
+        set(NCCL_XFER_LIB_DIR "$ENV{NCCL_XFER_LIB_DIR}")
+      endif()
+      if(NOT NCCL_XFER_LIBRARY AND DEFINED ENV{NCCL_XFER_LIBRARY})
+        set(NCCL_XFER_LIBRARY "$ENV{NCCL_XFER_LIBRARY}")
+      endif()
+
+      set(_NCCL_XFER_INCLUDE_HINTS)
+      set(_NCCL_XFER_LIBRARY_HINTS)
+      foreach(_nccl_xfer_prefix IN ITEMS
+          "${NCCL_XFER_HOME}"
+          "$ENV{NCCL_XFER_HOME}"
+          "${NCCL_HOME}"
+          "$ENV{NCCL_HOME}")
+        if(_nccl_xfer_prefix)
+          list(APPEND _NCCL_XFER_INCLUDE_HINTS
+            "${_nccl_xfer_prefix}/include")
+          list(APPEND _NCCL_XFER_LIBRARY_HINTS
+            "${_nccl_xfer_prefix}/lib"
+            "${_nccl_xfer_prefix}/lib64")
+        endif()
+      endforeach()
+      if(NCCL_XFER_LIB_DIR)
+        list(APPEND _NCCL_XFER_LIBRARY_HINTS "${NCCL_XFER_LIB_DIR}")
+      endif()
+      if(DEFINED ENV{NCCL_XFER_INCLUDE_DIR})
+        list(APPEND _NCCL_XFER_INCLUDE_HINTS "$ENV{NCCL_XFER_INCLUDE_DIR}")
+      endif()
+      if(DEFINED ENV{NCCL_XFER_LIB_DIR})
+        list(APPEND _NCCL_XFER_LIBRARY_HINTS "$ENV{NCCL_XFER_LIB_DIR}")
+      endif()
+      if(NCCL_INCLUDE_DIR)
+        list(APPEND _NCCL_XFER_INCLUDE_HINTS "${NCCL_INCLUDE_DIR}")
+      endif()
+      if(NCCL_LIB_DIR)
+        list(APPEND _NCCL_XFER_LIBRARY_HINTS "${NCCL_LIB_DIR}")
+      endif()
+      if(_NCCL_XFER_INCLUDE_HINTS)
+        list(REMOVE_DUPLICATES _NCCL_XFER_INCLUDE_HINTS)
+      endif()
+      if(_NCCL_XFER_LIBRARY_HINTS)
+        list(REMOVE_DUPLICATES _NCCL_XFER_LIBRARY_HINTS)
+      endif()
+
+      find_path(
+        NCCL_XFER_INCLUDE_DIR
+        NAMES nccl_xfer.h
+        HINTS ${_NCCL_XFER_INCLUDE_HINTS}
+      )
+      if(NOT NCCL_XFER_LIBRARY)
+        find_library(
+          NCCL_XFER_LIBRARY
+          NAMES nccl_xfer
+          HINTS ${_NCCL_XFER_LIBRARY_HINTS}
+        )
+      endif()
+
+      if(NCCL_XFER_INCLUDE_DIR AND (NCCL_XFER_LIBRARY OR NCCL_XFER_USE_NCCL_SO))
+        message(STATUS "Building symm_mem.mxn_cast with NCCL Xfer headers: ${NCCL_XFER_INCLUDE_DIR}")
+        if(NCCL_XFER_LIBRARY)
+          message(STATUS "Linking symm_mem.mxn_cast with NCCL Xfer library: ${NCCL_XFER_LIBRARY}")
+          list(APPEND Caffe2_CUDA_DEPENDENCY_LIBS ${NCCL_XFER_LIBRARY})
+        else()
+          message(STATUS "Using the existing NCCL link target for NCCL Xfer symbols")
+        endif()
+        list(APPEND Caffe2_GPU_INCLUDE ${NCCL_XFER_INCLUDE_DIR})
+        set_source_files_properties(
+          ${TORCH_SRC_DIR}/csrc/distributed/c10d/symm_mem/ops/nccl_mxn_cast.cu
+          PROPERTIES
+            COMPILE_FLAGS "-DPYTORCH_C10_DRIVER_API_SUPPORTED=1 -DNCCL_HAS_RESHARD_API"
+            INCLUDE_DIRECTORIES "${NCCL_XFER_INCLUDE_DIR}"
+        )
+      else()
+        message(STATUS "NCCL Xfer header/library not found; symm_mem.mxn_cast will use the build-time stub")
+      endif()
     endif()
 
     set(ASYNC_MM_FILE "${TORCH_SRC_DIR}/csrc/distributed/c10d/cuda/AsyncMM.cu")
