@@ -585,12 +585,24 @@ if(USE_CUDA)
         ${TORCH_SRC_DIR}/csrc/distributed/c10d/symm_mem/cuda_mem_pool.cpp
         PROPERTIES COMPILE_FLAGS "-DPYTORCH_C10_DRIVER_API_SUPPORTED=1"
       )
-      # NCCL Xfer user-window reshard support is consumed as an installed
-      # shared library instead of vendoring sources in the PyTorch tree.
+      # NCCL Xfer reshard support is consumed as an installed shared library
+      # instead of vendoring sources in the PyTorch tree.
       # Set NCCL_XFER_HOME to the NCCL Xfer install prefix, or pass
       # NCCL_XFER_INCLUDE_DIR / NCCL_XFER_LIBRARY directly.
       set(NCCL_XFER_HOME "" CACHE PATH "Path to NCCL Xfer install prefix")
       set(NCCL_XFER_LIB_DIR "" CACHE PATH "Path to NCCL Xfer library directory")
+      set(
+        NCCL_XFER_COPY_INCLUDE_DIR
+        ""
+        CACHE PATH
+        "Path to NCCL Xfer copy API include directory"
+      )
+      set(
+        NCCL_XFER_COPY_LIBRARY
+        ""
+        CACHE FILEPATH
+        "Path to NCCL Xfer copy API library"
+      )
       set(
         NCCL_XFER_USE_NCCL_SO
         OFF
@@ -605,6 +617,16 @@ if(USE_CUDA)
       endif()
       if(NOT NCCL_XFER_LIBRARY AND DEFINED ENV{NCCL_XFER_LIBRARY})
         set(NCCL_XFER_LIBRARY "$ENV{NCCL_XFER_LIBRARY}")
+      endif()
+      set(_NCCL_XFER_LIBRARY_EXPLICIT OFF)
+      if(NCCL_XFER_LIBRARY)
+        set(_NCCL_XFER_LIBRARY_EXPLICIT ON)
+      endif()
+      if(NOT NCCL_XFER_COPY_INCLUDE_DIR AND DEFINED ENV{NCCL_XFER_COPY_INCLUDE_DIR})
+        set(NCCL_XFER_COPY_INCLUDE_DIR "$ENV{NCCL_XFER_COPY_INCLUDE_DIR}")
+      endif()
+      if(NOT NCCL_XFER_COPY_LIBRARY AND DEFINED ENV{NCCL_XFER_COPY_LIBRARY})
+        set(NCCL_XFER_COPY_LIBRARY "$ENV{NCCL_XFER_COPY_LIBRARY}")
       endif()
 
       set(_NCCL_XFER_INCLUDE_HINTS)
@@ -624,6 +646,9 @@ if(USE_CUDA)
       endforeach()
       if(NCCL_XFER_LIB_DIR)
         list(APPEND _NCCL_XFER_LIBRARY_HINTS "${NCCL_XFER_LIB_DIR}")
+      endif()
+      if(NCCL_XFER_INCLUDE_DIR)
+        list(APPEND _NCCL_XFER_INCLUDE_HINTS "${NCCL_XFER_INCLUDE_DIR}")
       endif()
       if(DEFINED ENV{NCCL_XFER_INCLUDE_DIR})
         list(APPEND _NCCL_XFER_INCLUDE_HINTS "$ENV{NCCL_XFER_INCLUDE_DIR}")
@@ -656,8 +681,27 @@ if(USE_CUDA)
           HINTS ${_NCCL_XFER_LIBRARY_HINTS}
         )
       endif()
+      find_path(
+        NCCL_XFER_COPY_INCLUDE_DIR
+        NAMES nccl_Xfer.h
+        HINTS ${_NCCL_XFER_INCLUDE_HINTS}
+      )
+      if(NOT NCCL_XFER_COPY_LIBRARY)
+        find_library(
+          NCCL_XFER_COPY_LIBRARY
+          NAMES nccl_Xfer
+          HINTS ${_NCCL_XFER_LIBRARY_HINTS}
+        )
+      endif()
+      if(NOT NCCL_XFER_COPY_LIBRARY
+          AND _NCCL_XFER_LIBRARY_EXPLICIT
+          AND NCCL_XFER_LIBRARY)
+        set(NCCL_XFER_COPY_LIBRARY "${NCCL_XFER_LIBRARY}")
+      endif()
 
-      if(NCCL_XFER_INCLUDE_DIR AND (NCCL_XFER_LIBRARY OR NCCL_XFER_USE_NCCL_SO))
+      if(NCCL_XFER_INCLUDE_DIR
+          AND EXISTS "${NCCL_XFER_INCLUDE_DIR}/nccl_xfer.h"
+          AND (NCCL_XFER_LIBRARY OR NCCL_XFER_USE_NCCL_SO))
         message(STATUS "Building symm_mem.mxn_cast with NCCL Xfer headers: ${NCCL_XFER_INCLUDE_DIR}")
         if(NCCL_XFER_LIBRARY)
           message(STATUS "Linking symm_mem.mxn_cast with NCCL Xfer library: ${NCCL_XFER_LIBRARY}")
@@ -674,6 +718,29 @@ if(USE_CUDA)
         )
       else()
         message(STATUS "NCCL Xfer header/library not found; symm_mem.mxn_cast will use the build-time stub")
+      endif()
+      if(NCCL_XFER_COPY_INCLUDE_DIR
+          AND EXISTS "${NCCL_XFER_COPY_INCLUDE_DIR}/nccl_Xfer.h"
+          AND (NCCL_XFER_COPY_LIBRARY OR NCCL_XFER_USE_NCCL_SO))
+        message(STATUS "Building torch.distributed.tensor.reshard with NCCL Xfer copy API headers: ${NCCL_XFER_COPY_INCLUDE_DIR}")
+        if(NCCL_XFER_COPY_LIBRARY)
+          message(STATUS "Linking torch.distributed.tensor.reshard with NCCL Xfer copy API library: ${NCCL_XFER_COPY_LIBRARY}")
+          list(FIND Caffe2_CUDA_DEPENDENCY_LIBS "${NCCL_XFER_COPY_LIBRARY}" _NCCL_XFER_COPY_LIBRARY_INDEX)
+          if(_NCCL_XFER_COPY_LIBRARY_INDEX EQUAL -1)
+            list(APPEND Caffe2_CUDA_DEPENDENCY_LIBS ${NCCL_XFER_COPY_LIBRARY})
+          endif()
+        else()
+          message(STATUS "Using the existing NCCL link target for NCCL Xfer copy API symbols")
+        endif()
+        list(APPEND Caffe2_GPU_INCLUDE ${NCCL_XFER_COPY_INCLUDE_DIR})
+        set_source_files_properties(
+          ${TORCH_SRC_DIR}/csrc/distributed/tensor/ops/nccl_xg_redistribute.cu
+          PROPERTIES
+            COMPILE_FLAGS "-DPYTORCH_C10_DRIVER_API_SUPPORTED=1 -DNCCL_HAS_XFER_COPY_API"
+            INCLUDE_DIRECTORIES "${NCCL_XFER_COPY_INCLUDE_DIR}"
+        )
+      else()
+        message(STATUS "NCCL Xfer copy API header/library not found; torch.distributed.tensor.reshard will use the build-time stub")
       endif()
     endif()
 

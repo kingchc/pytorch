@@ -14,6 +14,12 @@ from torch.distributed.tensor._api import (
     randn,
     zeros,
 )
+from torch.distributed.tensor._xg_redistribute import (
+    _xg_redistribute,
+    finalize_xfer,
+    init_xfer,
+    XferContext,
+)
 from torch.distributed.tensor.placement_types import (
     _StridedShard,
     Partial,
@@ -44,6 +50,10 @@ __all__ = [
     "rand",
     "randn",
     "zeros",
+    "_xg_redistribute",
+    "init_xfer",
+    "finalize_xfer",
+    "XferContext",
 ]
 
 # For weights_only torch.load
@@ -88,6 +98,10 @@ full.__module__ = "torch.distributed.tensor"
 rand.__module__ = "torch.distributed.tensor"
 randn.__module__ = "torch.distributed.tensor"
 zeros.__module__ = "torch.distributed.tensor"
+_xg_redistribute.__module__ = "torch.distributed.tensor"
+init_xfer.__module__ = "torch.distributed.tensor"
+finalize_xfer.__module__ = "torch.distributed.tensor"
+XferContext.__module__ = "torch.distributed.tensor"
 
 # Register DTensor dispatch for higher order operators
 from torch._higher_order_ops.print import _register_dtensor_impl
