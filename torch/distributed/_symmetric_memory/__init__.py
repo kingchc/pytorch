@@ -2502,6 +2502,10 @@ def reshard(
       in-place: the source shard is read from ``buf``, then ``buf`` is
       overwritten with the destination shard.
 
+    All ranks must pass ``src_local_shape`` and ``dst_local_shape`` with the
+    same tensor rank.  Ranks absent from one side ignore that side's shape
+    values, but the shape length is still used to encode tensor rank.
+
     ``buf`` must be allocated via NCCL symmetric memory (e.g. :func:`empty`
     with the NCCL backend) and large enough for whichever role(s) this
     rank has::
@@ -2528,13 +2532,15 @@ def reshard(
         buf (Tensor): NCCL-symmetric-memory-allocated buffer sized for
             whichever role(s) this rank has (see above).
         src_local_shape (list[int] or torch.Size): This rank's local shape
-            for the source layout.  Ignored on destination-only ranks.
+            for the source layout.  Ignored on destination-only ranks except
+            for its length, which must equal the tensor rank on all ranks.
         src_mesh (DeviceMesh): Mesh describing the ranks holding the
             source layout.
         src_placements (list[Placement]): Placements of the source on
             ``src_mesh`` (one per mesh dim).
         dst_local_shape (list[int] or torch.Size): This rank's local shape
-            for the destination layout.  Ignored on source-only ranks.
+            for the destination layout.  Ignored on source-only ranks except
+            for its length, which must equal the tensor rank on all ranks.
         dst_mesh (DeviceMesh): Mesh describing the ranks holding the
             destination layout.
         dst_placements (list[Placement]): Placements of the destination on

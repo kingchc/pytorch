@@ -111,6 +111,8 @@ void nccl_reshard(
     const std::string& group_name) {
   TORCH_CHECK(buf.is_cuda(), "nccl_reshard: buf must be a CUDA tensor");
   TORCH_CHECK(buf.is_contiguous(), "nccl_reshard: buf must be contiguous");
+  // src_local_shape carries tensor rank on every rank, even when this rank is
+  // destination-only and its source-side shape values are zero-filled.
   const int ndims = static_cast<int>(src_local_shape.size());
   TORCH_CHECK(
       ndims >= 1 && ndims <= NCCL_RESHARD_MAX_TENSOR_DIMS,
@@ -120,9 +122,9 @@ void nccl_reshard(
       ndims);
   TORCH_CHECK(
       static_cast<int>(dst_local_shape.size()) == ndims,
-      "nccl_reshard: dst_local_shape rank (",
+      "nccl_reshard: local shape ranks must match; dst_local_shape rank (",
       dst_local_shape.size(),
-      ") must match src_local_shape rank (",
+      ") != src_local_shape rank (",
       ndims,
       ")");
 
